@@ -5,6 +5,7 @@ import Opts
 import Util
 import Vmsg
 import Walk
+import Glob
 
 import qualified Data.ByteString as B
 import qualified Data.Map as M
@@ -140,7 +141,8 @@ main = do
                flip runConfig cfg $ do
                    if null args
                       then logWarning "no inputs"
-                      else foldM_ (proc root) M.empty args
+                      else liftIO (mapM glob args) >>=
+                          foldM_ (proc root) M.empty . concat
                    when (cfgClean cfg) (clean root)
            | otherwise -> do
                putStrLn ""

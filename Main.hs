@@ -59,7 +59,9 @@ handler _ = return ()
 makePath :: FilePath -> IO ()
 makePath path = handle handler (createDirectoryIfMissing True path)
 
-type Mbox = M.Map HashKey FilePath
+type HashKey = (Int, Int, Int)
+
+type Mbox = M.Map HashKey [FilePath]
 
 proc :: FilePath -> Mbox -> FilePath -> ConfigReader IO Mbox
 proc dst mp src = do
@@ -90,15 +92,12 @@ proc dst mp src = do
                    liftIO $ B.writeFile path contents
                    logInfo $ "write: " ++ q src ++ "#" ++ show i ++
                        " to " ++ q path
-                   return (M.insert (hash m) path mp)
+                   return (M.insertWith (++) (hash m) [path] mp)
                | otherwise -> return mp
              Nothing -> do
                  logWarning $ "cannot parse message: #" ++ show i ++
                      " in " ++ q src
                  return mp
-
-
-type HashKey = (Int, Int, Int)
 
 hash :: Mail -> HashKey
 hash m = (maybe 0 (truncate . utcTimeToPOSIXSeconds) (mailDate m),
@@ -106,7 +105,7 @@ hash m = (maybe 0 (truncate . utcTimeToPOSIXSeconds) (mailDate m),
           maybe 0 (foldl step 0) (mailFrom m `mplus` mailTo m))
   where step a i = (a `shiftL` 7 + ord i .&. 0x7f) `mod` 0x1ffffff
 
-iter :: M.Map HashKey [FilePath] -> FilePath -> IO (M.Map HashKey [FilePath])
+iter :: Mbox -> FilePath -> IO Mbox
 iter mp path
   | map toUpper (takeExtension path) `elem` [".EML", ".SMS"] = do
       contents <- B.readFile path
@@ -115,11 +114,11 @@ iter mp path
            Nothing -> return mp
   | otherwise = return mp
 
-traverse :: FilePath -> IO (M.Map HashKey [FilePath])
+traverse :: FilePath -> IO Mbox
 traverse path = walk iter M.empty path
 
-clean :: FilePath -> ConfigReader IO ()
-clean path = liftIO (traverse path) >>= mapM_ removeFile' . extractDups
+clean :: Mbox -> ConfigReader IO ()
+clean mp = mapM_ removeFile' (extractDups mp)
   where extractDups = concat . map init . M.elems . M.filter ((>= 2) . length)
         removeFile' file = do
             liftIO $ removeFile file
@@ -138,12 +137,13 @@ main = do
            | cfgClean cfg || (not . null) args -> do
                let root = cfgRoot cfg
                makePath root
+               mbox <- traverse root
                flip runConfig cfg $ do
                    if null args
                       then logWarning "no inputs"
                       else liftIO (mapM glob args) >>=
-                          foldM_ (proc root) M.empty . concat
-                   when (cfgClean cfg) (clean root)
+                          foldM_ (proc root) mbox . concat
+                   when (cfgClean cfg) (clean mbox)
            | otherwise -> do
                putStrLn ""
                putStrLn $ showUsage progName

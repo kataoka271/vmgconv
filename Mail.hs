@@ -5,6 +5,8 @@ module Mail (
     , mailFrom
     , parseMail
     , multiparts
+    , unwrapMultipart
+    , showMail
   ) where
 
 import qualified Data.ByteString.Char8 as C
@@ -83,3 +85,21 @@ multiparts :: Mail -> [Mail]
 multiparts m = case multipart m of
                     [] -> [m]
                     ms -> m : concatMap multiparts ms
+
+unwrapMultipart :: Mail -> Mail
+unwrapMultipart m =
+    let ms = multipart m
+    in if length ms == 1
+          then m { mailHeaders = remove (mailHeaders m) ++ mailHeaders (head ms)
+                 , mailContents = mailContents (head ms) }
+          else m
+  where remove = filter ((/= "Content-Type") . fst)
+
+showMail :: Mail -> B.ByteString
+showMail m =
+    B.concat (map showPair (smsHeaders m)) `B.append`
+    B.concat (map showPair (mailHeaders m)) `B.append`
+    crlf `B.append`
+    mailContents m
+  where crlf = C.pack "\r\n"
+        showPair (k, v) = C.pack $ k ++ ": " ++ v ++ "\r\n"

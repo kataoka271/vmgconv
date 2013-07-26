@@ -23,6 +23,7 @@ import System.Directory (createDirectoryIfMissing,
 import System.Environment (getArgs, getProgName)
 import System.FilePath (splitExtension, takeExtension, (<.>), (</>))
 import System.Locale (defaultTimeLocale)
+import Text.Printf (printf)
 
 
 logWarning :: String -> ConfigReader IO ()
@@ -37,7 +38,7 @@ whenVerbose m = do
     when (cfgVerbose cfg) (lift m)
 
 q :: String -> String
-q s = showChar '"' $ showString (encode "CP932" s) "\""
+q s = encode "CP932" s
 
 newName :: FilePath -> IO FilePath
 newName path = do
@@ -63,41 +64,49 @@ type HashKey = (Int, Int, Int)
 
 type Mbox = M.Map HashKey [FilePath]
 
+enumerate :: [a] -> [(Int, Int, a)]
+enumerate xs = zip3 [1..] (repeat (length xs)) xs
+
 proc :: FilePath -> Mbox -> FilePath -> ConfigReader IO Mbox
 proc dst mp src = do
     dir <- liftIO (doesDirectoryExist src)
     if dir
        then logWarning (q src ++ " is directory") >> return mp
-       else liftIO (B.readFile src) >>=
-           foldM dispatch mp . zip [1..] . parseVmsg
-  where
-    dispatch :: Mbox -> (Int, Vmsg) -> ConfigReader IO Mbox
-    dispatch mp (i, vmsg) =
-        case vmsgIrmcType vmsg of
-             Just INET -> writeMsg mp (i, vmsg) "EML"
-             Just SMS -> writeMsg mp (i, vmsg) "SMS"
-             _ -> return mp
-    writeMsg :: Mbox -> (Int, Vmsg) -> String -> ConfigReader IO Mbox
-    writeMsg mp (i, vmsg) ext = do
-        let contents = vmsgContents vmsg
-            folder = maybe "Unknown" (decode "CP932") (vmsgFolderName vmsg)
-            parent = dst </> folder
-            format = formatTime defaultTimeLocale "%Y%m%d%H%M%S"
-        case parseMail contents of
-             Just m
-               | hash m `M.notMember` mp -> do
-                   path <- liftIO . newName $
-                       parent </> maybe "unknown" format (mailDate m) <.> ext
+       else logInfo ("process: " ++ q src) >>
+           liftIO (B.readFile src) >>=
+           foldM (dispatch dst src) mp . enumerate . parseVmsg
+
+dispatch :: FilePath -> FilePath ->
+    Mbox -> (Int, Int, Vmsg) -> ConfigReader IO Mbox
+dispatch dst src mp (i, n, vmsg) =
+    case vmsgIrmcType vmsg of
+         Just INET -> writeMsg dst src mp (i, n, vmsg) "EML"
+         Just SMS -> writeMsg dst src mp (i, n, vmsg) "SMS"
+         _ -> return mp
+
+writeMsg :: FilePath -> FilePath ->
+    Mbox -> (Int, Int, Vmsg) -> String -> ConfigReader IO Mbox
+writeMsg dst src mp (i, n, vmsg) ext = do
+    let contents = vmsgContents vmsg
+        folder = maybe "Unknown" (decode "CP932") (vmsgFolderName vmsg)
+        parent = dst </> folder
+        format = formatTime defaultTimeLocale "%Y%m%d%H%M%S"
+    case parseMail contents of
+         Just m
+           | hash m `M.notMember` mp -> do
+               path <- liftIO . newName $
+                   parent </> maybe "unknown" format (mailDate m) <.> ext
+               cfg <- ask
+               when (cfgRunIO cfg) $ do
                    liftIO $ makePath parent
                    liftIO $ B.writeFile path contents
-                   logInfo $ "write: " ++ q src ++ "#" ++ show i ++
-                       " to " ++ q path
-                   return (M.insertWith (++) (hash m) [path] mp)
-               | otherwise -> return mp
-             Nothing -> do
-                 logWarning $ "cannot parse message: #" ++ show i ++
-                     " in " ++ q src
-                 return mp
+               logInfo $ printf "write: [%4d/%4d] %s" i n (q path)
+               return (M.insertWith (++) (hash m) [path] mp)
+           | otherwise -> return mp
+         Nothing -> do
+             logWarning $
+                 printf "cannot parse message: [%4d/%4d] %s" i n (q src)
+             return mp
 
 hash :: Mail -> HashKey
 hash m = (maybe 0 (truncate . utcTimeToPOSIXSeconds) (mailDate m),
@@ -121,8 +130,10 @@ clean :: Mbox -> ConfigReader IO ()
 clean mp = mapM_ removeFile' (extractDups mp)
   where extractDups = concat . map init . M.elems . M.filter ((>= 2) . length)
         removeFile' file = do
-            liftIO $ removeFile file
-            logInfo $ "remove: " ++ q file
+            cfg <- ask
+            when (cfgRunIO cfg) $ do
+                liftIO $ removeFile file
+                logInfo $ "remove: " ++ q file
 
 
 main :: IO ()

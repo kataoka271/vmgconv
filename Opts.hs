@@ -20,14 +20,16 @@ runConfig = runReaderT . unwrap
 data Config = Config {
     cfgVerbose :: Bool,
     cfgRoot :: FilePath,
-    cfgClean :: Bool
+    cfgClean :: Bool,
+    cfgRunIO :: Bool
   } deriving (Show)
 
 defaultConfig :: Config
 defaultConfig = Config {
     cfgVerbose = True,
     cfgRoot = "MailBox",
-    cfgClean = False
+    cfgClean = False,
+    cfgRunIO = True
   }
 
 options :: [OptDescr (Config -> Maybe Config) ]
@@ -38,6 +40,8 @@ options = [
         "set root directory"
     , Option "C" ["clean"] (NoArg opt_clean)
         "clean duplicate files after processing"
+    , Option "n" ["dry-run"] (NoArg opt_dryRun)
+        "no execute of file output"
     , Option "h" ["help"] (NoArg opt_usage)
         "print this help"
     ]
@@ -45,6 +49,7 @@ options = [
     opt_quiet cfg = return cfg { cfgVerbose = False }
     opt_root arg cfg = return cfg { cfgRoot = arg }
     opt_clean cfg = return cfg { cfgClean = True }
+    opt_dryRun cfg = return cfg { cfgRunIO = False }
     opt_usage _ = Nothing
 
 parseArgs :: [String] -> Either String (Config, [String])

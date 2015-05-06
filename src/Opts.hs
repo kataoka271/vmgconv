@@ -9,10 +9,16 @@ module Opts (
   ) where
 
 import System.Console.GetOpt
+import Control.Applicative
 import Control.Monad.Reader
 
 newtype ConfigReader m a = ConfigReader { unwrap :: ReaderT Config m a }
-  deriving (Functor, Monad, MonadIO, MonadTrans, MonadReader Config)
+  deriving (Functor,
+            Applicative,
+            Monad,
+            MonadTrans,
+            MonadIO,
+            MonadReader Config)
 
 runConfig :: ConfigReader m a -> Config -> m a
 runConfig = runReaderT . unwrap
